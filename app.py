@@ -3,16 +3,23 @@ import logging
 import time
 import os
 from collections import defaultdict
-from openai import OpenAI
+# from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 from pathlib import Path
+import requests
+from dotenv import load_dotenv
+from groq import Groq
+
+load_dotenv()
 
 # Instead, set the API key directly
-api_key = "your_openaikey_here"
+# api_key = "your_openaikey_here"
 
-print(f"API key loaded (last 4 chars): ...{api_key[-4:]}")
+# print(f"API key loaded (last 4 chars): ...{api_key[-4:]}")
 
-client = OpenAI(api_key=api_key)
+# client = OpenAI(api_key=api_key)
+
+PERPLEXITY_TOKEN = os.getenv("PERPLEXITY_TOKEN")
 
 app = Flask(__name__)
 
@@ -23,50 +30,57 @@ logger = logging.getLogger(__name__)
 # Store for aggregating messages
 message_buffer = defaultdict(list)
 last_print_time = defaultdict(float)
-AGGREGATION_INTERVAL = 30  # seconds
+# AGGREGATION_INTERVAL = 30  # seconds
+AGGREGATION_INTERVAL = 10  # seconds
 
 # Add at the top with other global variables
 notification_cooldowns = defaultdict(float)
-NOTIFICATION_COOLDOWN = 300  # 5 minutes cooldown between notifications for each session
+# NOTIFICATION_COOLDOWN = 300  # 5 minutes cooldown between notifications for each session
+NOTIFICATION_COOLDOWN = 5
 
 # Add these near the top of the file, after the imports
-if os.getenv('HTTPS_PROXY'):
-    os.environ['OPENAI_PROXY'] = os.getenv('HTTPS_PROXY')
+# if os.getenv('HTTPS_PROXY'):
+#     os.environ['OPENAI_PROXY'] = os.getenv('HTTPS_PROXY')
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def analyze_drinking_intent(text):
     """Analyze text for drinking intent using OpenAI"""
-    try:
-        # Add debug logging
-        logger.info("Attempting to connect to OpenAI API...")
-        if not api_key:
-            raise ValueError("OpenAI API key is not set")
+    # try:
+    #     # Add debug logging
+    #     logger.info("Attempting to connect to OpenAI API...")
+    #     if not api_key:
+    #         raise ValueError("OpenAI API key is not set")
         
-        # Only log the last 4 characters of the API key for security
-        key_preview = f"...{api_key[-4:]}" if api_key else "None"
-        logger.info(f"API key check (last 4 chars): {key_preview}")
+    #     # Only log the last 4 characters of the API key for security
+    #     key_preview = f"...{api_key[-4:]}" if api_key else "None"
+    #     logger.info(f"API key check (last 4 chars): {key_preview}")
         
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are an AI that analyzes conversations to detect if someone is planning to drink alcohol. Respond with 'YES' if you detect intent to drink alcohol, and 'NO' if you don't."},
-                {"role": "user", "content": f"Analyze this conversation for intent to drink alcohol: {text}"}
-            ],
-            temperature=0.7,
-            max_tokens=50,
-            timeout=30  # Add timeout parameter
-        )
+    #     response = client.chat.completions.create(
+    #         model="gpt-4",
+    #         messages=[
+    #             {"role": "system", "content": "You are an AI that analyzes conversations to detect if someone is planning to drink alcohol. Respond with 'YES' if you detect intent to drink alcohol, and 'NO' if you don't."},
+    #             {"role": "user", "content": f"Analyze this conversation for intent to drink alcohol: {text}"}
+    #         ],
+    #         temperature=0.7,
+    #         max_tokens=50,
+    #         timeout=30  # Add timeout parameter
+    #     )
         
-        answer = response.choices[0].message.content.strip().upper()
-        logger.info(f"Successfully received response from OpenAI: {answer}")
-        return answer == "YES"
-    except Exception as e:
-        logger.error(f"Error analyzing drinking intent: {str(e)}")
-        logger.error(f"Error type: {type(e).__name__}")
-        # Print full traceback for debugging
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
-        return False
+    #     answer = response.choices[0].message.content.strip().upper()
+    #     logger.info(f"Successfully received response from OpenAI: {answer}")
+    #     return answer == "YES"
+    # except Exception as e:
+    #     logger.error(f"Error analyzing drinking intent: {str(e)}")
+    #     logger.error(f"Error type: {type(e).__name__}")
+    #     # Print full traceback for debugging
+    #     import traceback
+    #     logger.error(f"Full traceback: {traceback.format_exc()}")
+    #     return False
+    return "YES"
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def analyze_search_intent(text):
+    return "search" in text
 
 def print_aggregated_messages(session_id):
     """Print aggregated messages for logging purposes only"""
@@ -85,6 +99,104 @@ def print_aggregated_messages(session_id):
     
     # Clear buffer after processing
     message_buffer[session_id].clear()
+
+def search_perplexity(text):
+
+    print('Inside search_perplexity')
+
+    url = "https://api.perplexity.ai/chat/completions"
+
+    payload = {
+        "model": "llama-3.1-sonar-small-128k-online",
+        "messages": [
+            {
+                "role": "system",
+                "content": "You will be given a bunch of text. Extract the relevant question from that and return the answer. Be precise and concise."
+            },
+            {
+                "role": "user",
+                "content": text
+            }
+        ],
+        "max_tokens": "Optional",
+        "temperature": 0.2,
+        "top_p": 0.9,
+        "return_citations": True,
+        "search_domain_filter": ["perplexity.ai"],
+        "return_images": False,
+        "return_related_questions": False,
+        "search_recency_filter": "month",
+        "top_k": 0,
+        "stream": False,
+        "presence_penalty": 0,
+        "frequency_penalty": 1
+    }
+    headers = {
+        "Authorization": f"Bearer {PERPLEXITY_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.request("POST", url, json=payload, headers=headers)
+    return response.text
+    
+def ask_groq(text):
+
+    print('Inside ask_groq')
+
+    client = Groq()
+    chat_completion = client.chat.completions.create(
+        #
+        # Required parameters
+        #
+        messages=[
+            # Set an optional system message. This sets the behavior of the
+            # assistant and can be used to provide specific instructions for
+            # how it should behave throughout the conversation.
+            {
+                "role": "system",
+                "content": "You are a helpful assistant. You will be given a bunch of text. Extract the relevant question from that and return the answer. Be precise and concise."
+            },
+            # Set a user message for the assistant to respond to.
+            {
+                "role": "user",
+                "content": text,
+            }
+        ],
+
+        # The language model which will generate the completion.
+        model="llama3-8b-8192",
+
+        #
+        # Optional parameters
+        #
+
+        # Controls randomness: lowering results in less random completions.
+        # As the temperature approaches zero, the model will become deterministic
+        # and repetitive.
+        temperature=0.5,
+
+        # The maximum number of tokens to generate. Requests can use up to
+        # 32,768 tokens shared between prompt and completion.
+        max_tokens=1024,
+
+        # Controls diversity via nucleus sampling: 0.5 means half of all
+        # likelihood-weighted options are considered.
+        top_p=1,
+
+        # A stop sequence is a predefined or user-specified text string that
+        # signals an AI to stop generating content, ensuring its responses
+        # remain focused and concise. Examples include punctuation marks and
+        # markers like "[end]".
+        stop=None,
+
+        # If set, partial message deltas will be sent.
+        stream=False,
+    )
+
+    # Print the completion returned by the LLM.
+    print(chat_completion.choices[0].message.content)
+
+    return chat_completion.choices[0].message.content
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -130,20 +242,22 @@ def webhook():
             sorted_messages = sorted(message_buffer[session_id], key=lambda x: x['start'])
             combined_text = ' '.join(msg['text'] for msg in sorted_messages if msg['text'])
             logger.info(f"Analyzing combined text for session {session_id}: {combined_text}")
+
+            if analyze_search_intent(combined_text.lower()):
+                logger.warning(f"Search intent detected for session {session_id}!")
+                notification_cooldowns[session_id] = current_time
+
+                # response_text = search_perplexity(combined_text)
+                response_text = ask_groq(combined_text)
+
+                return jsonify({
+                    "message": f"Groq says: {response_text}"
+                }), 200
             
             # Clear the buffer immediately after combining text
             message_buffer[session_id].clear()
             last_print_time[session_id] = current_time
             
-            if analyze_drinking_intent(combined_text):
-                logger.warning(f"🚨 Drinking intent detected for session {session_id}!")
-                # Update notification cooldown for this session
-                notification_cooldowns[session_id] = current_time
-                return jsonify({
-                    "message": "Hey, you shouldn't drink alcohol!"
-                }), 200
-        
-        # Return empty response when no drinking intent detected
         return jsonify({"status": "success"}), 200
 
 @app.route('/webhook/setup-status', methods=['GET'])
