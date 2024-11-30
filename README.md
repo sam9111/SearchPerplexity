@@ -1,1 +1,1 @@
-# oni-app
+# omi-app
