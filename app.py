@@ -34,7 +34,7 @@ AGGREGATION_INTERVAL = 30  # seconds
 
 notification_cooldowns = defaultdict(float)
 # NOTIFICATION_COOLDOWN = 300  # 5 minutes cooldown between notifications for each session
-NOTIFICATION_COOLDOWN = 300
+NOTIFICATION_COOLDOWN = 60
 
 # Add these near the top of the file, after the imports
 # if os.getenv('HTTPS_PROXY'):
