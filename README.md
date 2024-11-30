@@ -1,1 +1,4 @@
-# omi-app
+# SearchPerplexity
+
+Bring your own Perplexity API key.
+
