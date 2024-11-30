@@ -9,14 +9,13 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 from groq import Groq
+import json
 
 load_dotenv()
 
 # Instead, set the API key directly
 # api_key = "your_openaikey_here"
-
 # print(f"API key loaded (last 4 chars): ...{api_key[-4:]}")
-
 # client = OpenAI(api_key=api_key)
 
 PERPLEXITY_TOKEN = os.getenv("PERPLEXITY_TOKEN")
@@ -30,10 +29,8 @@ logger = logging.getLogger(__name__)
 # Store for aggregating messages
 message_buffer = defaultdict(list)
 last_print_time = defaultdict(float)
-# AGGREGATION_INTERVAL = 30  # seconds
 AGGREGATION_INTERVAL = 10  # seconds
 
-# Add at the top with other global variables
 notification_cooldowns = defaultdict(float)
 # NOTIFICATION_COOLDOWN = 300  # 5 minutes cooldown between notifications for each session
 NOTIFICATION_COOLDOWN = 5
@@ -43,44 +40,35 @@ NOTIFICATION_COOLDOWN = 5
 #     os.environ['OPENAI_PROXY'] = os.getenv('HTTPS_PROXY')
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def analyze_drinking_intent(text):
-    """Analyze text for drinking intent using OpenAI"""
-    # try:
-    #     # Add debug logging
-    #     logger.info("Attempting to connect to OpenAI API...")
-    #     if not api_key:
-    #         raise ValueError("OpenAI API key is not set")
-        
-    #     # Only log the last 4 characters of the API key for security
-    #     key_preview = f"...{api_key[-4:]}" if api_key else "None"
-    #     logger.info(f"API key check (last 4 chars): {key_preview}")
-        
-    #     response = client.chat.completions.create(
-    #         model="gpt-4",
-    #         messages=[
-    #             {"role": "system", "content": "You are an AI that analyzes conversations to detect if someone is planning to drink alcohol. Respond with 'YES' if you detect intent to drink alcohol, and 'NO' if you don't."},
-    #             {"role": "user", "content": f"Analyze this conversation for intent to drink alcohol: {text}"}
-    #         ],
-    #         temperature=0.7,
-    #         max_tokens=50,
-    #         timeout=30  # Add timeout parameter
-    #     )
-        
-    #     answer = response.choices[0].message.content.strip().upper()
-    #     logger.info(f"Successfully received response from OpenAI: {answer}")
-    #     return answer == "YES"
-    # except Exception as e:
-    #     logger.error(f"Error analyzing drinking intent: {str(e)}")
-    #     logger.error(f"Error type: {type(e).__name__}")
-    #     # Print full traceback for debugging
-    #     import traceback
-    #     logger.error(f"Full traceback: {traceback.format_exc()}")
-    #     return False
-    return "YES"
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def analyze_search_intent(text):
-    return "search" in text
+    # return "perplexity" in text and "search" in text
+
+    print('Inside analyze_search_intent')
+
+    client = Groq()
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a helpful assistant. You will be given a bunch of text. Analyze the intent of the user to search for information. There might be spelling mistakes, as the input you get is an audio transcript. If the exact word 'perplexity' or another word which is close in spelling to it is in the text, rewrite the question as a proper question for searching in Perplexity. Return a JSON object of this syntax: {'intent': <'yes' if there is intent to search and 'no' otherwise>, 'query': '<insert your search query here>'}",
+            },
+            {
+                "role": "user",
+                "content": text,
+            }
+        ],
+        response_format= {"type": "json_object"},
+        model="llama3-8b-8192",
+        temperature=0.5,
+        max_tokens=1024,
+        top_p=1,
+        stop=None,
+        stream=False,
+    )
+    
+    print(chat_completion.choices[0].message.content)
+
+    return json.loads(chat_completion.choices[0].message.content)
 
 def print_aggregated_messages(session_id):
     """Print aggregated messages for logging purposes only"""
@@ -101,8 +89,8 @@ def print_aggregated_messages(session_id):
     message_buffer[session_id].clear()
 
 def search_perplexity(text):
-
     print('Inside search_perplexity')
+    text = text + "\nReturn the answer in less than 120 characters (around 4 lines). Be short and precise."
 
     url = "https://api.perplexity.ai/chat/completions"
 
@@ -118,7 +106,8 @@ def search_perplexity(text):
                 "content": text
             }
         ],
-        "max_tokens": "Optional",
+        # "max_tokens": "Optional",
+        "max_tokens": 40,
         "temperature": 0.2,
         "top_p": 0.9,
         "return_citations": True,
@@ -137,8 +126,13 @@ def search_perplexity(text):
     }
 
     response = requests.request("POST", url, json=payload, headers=headers)
-    return response.text
-    
+
+    print(response.__dict__)
+
+    print(response.text)
+
+    return json.loads(response.text)['choices'][0]['message']['content']
+
 def ask_groq(text):
 
     print('Inside ask_groq')
@@ -154,7 +148,7 @@ def ask_groq(text):
             # how it should behave throughout the conversation.
             {
                 "role": "system",
-                "content": "You are a helpful assistant. You will be given a bunch of text. Extract the relevant question from that and return the answer. Be precise and concise."
+                "content": "You are a helpful assistant. You will be given a bunch of text. Extract the relevant question from that and return the answer. Be precise and concise. Your answer should be less than 120 characters (around 4 lines). Return ONLY the answer."
             },
             # Set a user message for the assistant to respond to.
             {
@@ -197,6 +191,25 @@ def ask_groq(text):
     print(chat_completion.choices[0].message.content)
 
     return chat_completion.choices[0].message.content
+
+@app.route('/auth', methods=['POST'])
+def auth():
+    if request.method == 'POST':
+        # return jsonify({"status": "success"}), 200
+        data = request.json
+        logger.info(f"Received data: {data}")
+
+        user_id = data.get('user_id')
+        user_api_key = data.get('user_api_key')
+
+        # load dict from json file, add entry and save back to file
+        with open('users.json', 'r') as f:
+            users = json.load(f)
+        users[user_id] = user_api_key
+        with open('users.json', 'w') as f:
+            json.dump(users, f)
+
+        return jsonify({"status": "success"}), 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -243,15 +256,17 @@ def webhook():
             combined_text = ' '.join(msg['text'] for msg in sorted_messages if msg['text'])
             logger.info(f"Analyzing combined text for session {session_id}: {combined_text}")
 
-            if analyze_search_intent(combined_text.lower()):
+            intent = analyze_search_intent(combined_text.lower())
+            if intent['intent'].lower() == "yes":
+                # if analyze_search_intent(combined_text.lower()):
                 logger.warning(f"Search intent detected for session {session_id}!")
                 notification_cooldowns[session_id] = current_time
 
-                # response_text = search_perplexity(combined_text)
-                response_text = ask_groq(combined_text)
+                response_text = search_perplexity(intent['query'])
+                # response_text = ask_groq(combined_text)
 
                 return jsonify({
-                    "message": f"Groq says: {response_text}"
+                    "message": f"Perplexity: {response_text}"
                 }), 200
             
             # Clear the buffer immediately after combining text
