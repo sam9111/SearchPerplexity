@@ -113,7 +113,6 @@ def search_perplexity(perplexity_key, text):
             {"role": "user", "content": text},
         ],
         # "max_tokens": "Optional",
-        "max_tokens": 40,
         "temperature": 0.2,
         "top_p": 0.9,
         "return_citations": True,
