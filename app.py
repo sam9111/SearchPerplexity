@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, render_template, request, jsonify
 import logging
 import time
 import os
@@ -18,7 +18,7 @@ load_dotenv()
 # print(f"API key loaded (last 4 chars): ...{api_key[-4:]}")
 # client = OpenAI(api_key=api_key)
 
-PERPLEXITY_TOKEN = os.getenv("PERPLEXITY_TOKEN")
+# PERPLEXITY_TOKEN = os.getenv("PERPLEXITY_TOKEN")
 
 app = Flask(__name__)
 
@@ -88,7 +88,7 @@ def print_aggregated_messages(session_id):
     # Clear buffer after processing
     message_buffer[session_id].clear()
 
-def search_perplexity(text):
+def search_perplexity(perplexity_key, text):
     print('Inside search_perplexity')
     text = text + "\nReturn the answer in less than 120 characters (around 4 lines). Be short and precise."
 
@@ -121,7 +121,7 @@ def search_perplexity(text):
         "frequency_penalty": 1
     }
     headers = {
-        "Authorization": f"Bearer {PERPLEXITY_TOKEN}",
+        "Authorization": f"Bearer {perplexity_key}",
         "Content-Type": "application/json"
     }
 
@@ -192,20 +192,29 @@ def ask_groq(text):
 
     return chat_completion.choices[0].message.content
 
+@app.route('/auth-frontend', methods=['GET'])
+def auth_frontend():
+    return render_template('index.html')
+
+
+
 @app.route('/auth', methods=['POST'])
 def auth():
     if request.method == 'POST':
         # return jsonify({"status": "success"}), 200
-        data = request.json
-        logger.info(f"Received data: {data}")
+        # data = request.json
+        # logger.info(f"Received data: {data}")
+        # uid = request.args.get('uid')
+        # user_api_key = data.get('user_api_key')
 
-        user_id = data.get('user_id')
-        user_api_key = data.get('user_api_key')
-
+        data = request.get_json()
+        uid = data.get('uid')
+        perplexity_key = data.get('perplexity_key')
+        
         # load dict from json file, add entry and save back to file
         with open('users.json', 'r') as f:
             users = json.load(f)
-        users[user_id] = user_api_key
+        users[uid] = perplexity_key
         with open('users.json', 'w') as f:
             json.dump(users, f)
 
@@ -219,6 +228,15 @@ def webhook():
         data = request.json
         logger.info(f"Received data: {data}")
         
+        # get perplexity key from uid in users.json
+        uid = request.args.get('uid')
+        with open('users.json', 'r') as f:
+            users = json.load(f)
+        perplexity_key = users.get(uid)
+        if not perplexity_key:
+            logger.error("No perplexity key found for uid")
+            return jsonify({"status": "error", "message": "No perplexity key found for uid"}), 400
+
         # Extract session ID and segments
         session_id = data.get('session_id')
         if not session_id:
@@ -262,7 +280,7 @@ def webhook():
                 logger.warning(f"Search intent detected for session {session_id}!")
                 notification_cooldowns[session_id] = current_time
 
-                response_text = search_perplexity(intent['query'])
+                response_text = search_perplexity(perplexity_key, intent['query'])
                 # response_text = ask_groq(combined_text)
 
                 return jsonify({
