@@ -296,10 +296,21 @@ def webhook():
 @app.route('/webhook/setup-status', methods=['GET'])
 def setup_status():
     try:
-        # Always return true for setup status
-        return jsonify({
-            "is_setup_completed": True
-        }), 200
+
+        # check if uid from query parameters is in users.json
+        uid = request.args.get('uid')
+        with open('users.json', 'r') as f:
+            users = json.load(f)
+        if uid not in users:
+            return jsonify({
+                "is_setup_completed": False,
+                "error": "No perplexity key found for uid"
+            }) 
+        else:
+            # Always return true for setup status
+            return jsonify({
+                "is_setup_completed": True
+            }), 200
     except Exception as e:
         logger.error(f"Error checking setup status: {str(e)}")
         return jsonify({
